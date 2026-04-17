@@ -1,5 +1,6 @@
 # scripts
 [mysql_replica_monitor.sh]
+
 Kamu akan dapat:
 🚨 Alert saat problem
 ✅ Notif saat normal kembali
