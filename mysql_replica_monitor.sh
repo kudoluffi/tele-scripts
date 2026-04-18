@@ -99,11 +99,10 @@ if [[ "$SEND" -eq 1 || "$FORCE_SEND" -eq 1 ]]; then
         HEADER="${EMOJI_REPORT} MySQL Replica Daily Status"
     fi
 
-    MESSAGE="$HEADER\n\n[$HOSTNAME]\nMaster : $MASTER_HOST\nTime   : $NOW\n\nIO Thread   : $IO_STATUS\nSQL Thread  : $S>
+    MESSAGE="$HEADER\n\n[$HOSTNAME]\nMaster : $MASTER_HOST\nTime   : $NOW\n\nIO Thread   : $IO_STATUS\nSQL Thread  : $SQL_STATUS\nDelay       : $DELAY_STATUS\n\nState  : $STATE_TEXT"
 
 fi
 
-# ================= SEND =================
 
 FORMATTED_MESSAGE=$(printf "%b" "$MESSAGE")
 
@@ -112,3 +111,4 @@ curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
 -d text="$FORMATTED_MESSAGE"
 
         echo "$CURRENT_STATE" > "$STATE_FILE"
+
