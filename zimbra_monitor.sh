@@ -50,7 +50,8 @@ CPU_CORES=$(nproc)
 QUEUE=$($ZIMBRA_CMD postqueue -p 2>/dev/null | grep -c "^[A-F0-9]")
 
 # ================= SSL =================
-SSL_DATE=$($ZIMBRA_CMD zmcertmgr viewdeployedcrt 2>/dev/null \
+
+SSL_DATE=$(su - zimbra -c "zmcertmgr viewdeployedcrt" 2>/dev/null \
     | grep -m1 "notAfter=" \
     | cut -d'=' -f2)
 
@@ -64,7 +65,6 @@ if [[ -n "$SSL_DATE" ]]; then
         SSL_DAYS=$(( (SSL_EXP - NOW_SEC) / 86400 ))
     fi
 fi
-
 # ================= BACKUP =================
 LAST_BACKUP_FILE=$(ls -t /backup/zimbra/logs/ 2>/dev/null | head -1)
 LAST_BACKUP_DATE=$(echo "$LAST_BACKUP_FILE" | grep -oE '[0-9]{8}')
