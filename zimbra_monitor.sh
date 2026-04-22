@@ -42,7 +42,7 @@ RAM_USAGE=$(free | awk '/Mem:/ {printf("%.0f"), $3/$2 * 100}')
 CPU_LOAD=$(uptime | awk -F'load average:' '{ print $2 }' | cut -d',' -f1 | xargs)
 
 # ================= QUEUE =================
-QUEUE=$(mailq | grep -c "^[A-F0-9]")
+QUEUE=$(su - zimbra -c "postqueue -p" 2>/dev/null | grep -c "^[A-F0-9]")
 
 # ================= SSL =================
 SSL_DATE=$(su - zimbra -c "zmcertmgr viewdeployedcrt" 2>/dev/null | grep "Not After" | head -1 | cut -d':' -f2- | xargs)
@@ -151,8 +151,12 @@ fi
 
 FORMATTED_MESSAGE=$(printf "%b" "$MESSAGE")
 
-curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
--d chat_id="$TELEGRAM_CHAT_ID" \
--d text="$FORMATTED_MESSAGE"
+if [[ -n "$MESSAGE" ]]; then
+    FORMATTED_MESSAGE=$(printf "%b" "$MESSAGE")
+
+    curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+    -d chat_id="$TELEGRAM_CHAT_ID" \
+    -d text="$FORMATTED_MESSAGE"
+fi
 
 echo "$CURRENT_STATE" > "$STATE_FILE"
