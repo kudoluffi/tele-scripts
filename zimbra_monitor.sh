@@ -23,10 +23,12 @@ EMOJI_OK="\U00002705"
 EMOJI_ALERT="\U0001F6A8"
 EMOJI_REPORT="\U0001F4CA"
 
+ZIMBRA_CMD="sudo -u zimbra"
+
 # ==========================================
 
-# ================= SERVICE STATUS =================
-STATUS=$(su - zimbra -c "zmcontrol status" 2>/dev/null)
+# ================= SERVICE =================
+STATUS=$($ZIMBRA_CMD zmcontrol status 2>/dev/null)
 
 TOTAL_SERVICE=$(echo "$STATUS" | grep -E "Running|Stopped" | wc -l)
 RUNNING_SERVICE=$(echo "$STATUS" | grep -c "Running")
@@ -34,21 +36,23 @@ STOPPED_LIST=$(echo "$STATUS" | grep "Stopped" | awk '{print $1}' | paste -sd ",
 
 # ================= DISK =================
 DISK_USAGE=$(df -h /opt/zimbra | awk 'NR==2 {print $5}' | sed 's/%//')
+DISK_AVAIL=$(df -h /opt/zimbra | awk 'NR==2 {print $4}')
 
 # ================= RAM =================
 RAM_USAGE=$(free | awk '/Mem:/ {printf("%.0f"), $3/$2 * 100}')
+RAM_INFO=$(free -h | awk '/Mem:/ {print $3 "/" $2}')
 
 # ================= CPU =================
 CPU_LOAD=$(uptime | awk -F'load average:' '{ print $2 }' | cut -d',' -f1 | xargs)
+CPU_CORES=$(nproc)
 
 # ================= QUEUE =================
-QUEUE=$(su - zimbra -c "postqueue -p" 2>/dev/null | grep -c "^[A-F0-9]")
+QUEUE=$($ZIMBRA_CMD postqueue -p 2>/dev/null | grep -c "^[A-F0-9]")
 
 # ================= SSL =================
-SSL_DATE=$(su - zimbra -c "zmcertmgr viewdeployedcrt" 2>/dev/null \
-    | grep -i "NotAfter" \
-    | sed 's/.*NotAfter[[:space:]]*:[[:space:]]*//' \
-    | head -1)
+SSL_DATE=$($ZIMBRA_CMD zmcertmgr viewdeployedcrt 2>/dev/null \
+    | grep -m1 "notAfter=" \
+    | cut -d'=' -f2)
 
 SSL_DAYS="N/A"
 
@@ -67,15 +71,12 @@ LAST_BACKUP_DATE=$(echo "$LAST_BACKUP_FILE" | grep -oE '[0-9]{8}')
 
 BACKUP_STATUS="UNKNOWN"
 if [[ -n "$LAST_BACKUP_DATE" ]]; then
-    BACKUP_FORMATTED=$(date -d "$LAST_BACKUP_DATE" '+%Y-%m-%d')
-    BACKUP_STATUS="$BACKUP_FORMATTED"
+    BACKUP_STATUS=$(date -d "$LAST_BACKUP_DATE" '+%Y-%m-%d')
 fi
 
 # ================= STATE =================
-
 CURRENT_STATE="OK"
 
-# alert condition
 if [[ "$RUNNING_SERVICE" -lt "$TOTAL_SERVICE" ]] || [[ "$DISK_USAGE" -ge "$DISK_CRITICAL" ]]; then
     CURRENT_STATE="PROBLEM"
 fi
@@ -94,8 +95,8 @@ if [[ "$CURRENT_STATE" != "$LAST_STATE" ]]; then
     [[ "$CURRENT_STATE" == "PROBLEM" ]] && TYPE="PROBLEM"
 fi
 
-# daily jam 06:30
-if [[ "$CURRENT_STATE" == "OK" && "$CURRENT_HOUR_MIN" == "06:30" ]]; then
+# DAILY jam 05:30
+if [[ "$CURRENT_STATE" == "OK" && "$CURRENT_HOUR_MIN" == "05:30" ]]; then
     LAST_DAILY=""
     [[ -f "$DAILY_FILE" ]] && LAST_DAILY=$(cat "$DAILY_FILE")
 
@@ -110,60 +111,79 @@ fi
 
 if [[ "$SEND" -eq 1 || "$FORCE_SEND" -eq 1 ]]; then
 
-    # service text
+    # SERVICE
     if [[ "$RUNNING_SERVICE" -eq "$TOTAL_SERVICE" ]]; then
-        SERVICE_STATUS="$RUNNING_SERVICE/$TOTAL_SERVICE Running ${EMOJI_OK}"
+        SERVICE_LINE="✅ Services: $RUNNING_SERVICE running"
     else
-        SERVICE_STATUS="$RUNNING_SERVICE/$TOTAL_SERVICE Running ❌"
+        SERVICE_LINE="❌ Services: $RUNNING_SERVICE/$TOTAL_SERVICE running"
+        [[ -n "$STOPPED_LIST" ]] && SERVICE_LINE="$SERVICE_LINE ($STOPPED_LIST)"
     fi
 
-    # disk status
+    # DISK
     if [[ "$DISK_USAGE" -lt 80 ]]; then
-        DISK_STATUS="$DISK_USAGE% (OK)"
-    elif [[ "$DISK_USAGE" -lt "$DISK_CRITICAL" ]]; then
-        DISK_STATUS="$DISK_USAGE% (WARN)"
+        DISK_LINE="💾 Disk: ${DISK_USAGE}% (${DISK_AVAIL} available) ✅"
+    elif [[ "$DISK_USAGE" -lt 90 ]]; then
+        DISK_LINE="💾 Disk: ${DISK_USAGE}% (${DISK_AVAIL} available) ⚠️"
     else
-        DISK_STATUS="$DISK_USAGE% (CRITICAL)"
+        DISK_LINE="💾 Disk: ${DISK_USAGE}% (${DISK_AVAIL} available) ❌"
     fi
 
-    # ssl status
-    if [[ "$SSL_DAYS" -gt 30 ]]; then
-        SSL_STATUS="$SSL_DAYS days (OK)"
-    elif [[ "$SSL_DAYS" -gt 14 ]]; then
-        SSL_STATUS="$SSL_DAYS days ⚠️"
+    # RAM
+    if [[ "$RAM_USAGE" -lt 80 ]]; then
+        RAM_LINE="🧠 Memory: ${RAM_USAGE}% (${RAM_INFO}) ✅"
     else
-        SSL_STATUS="$SSL_DAYS days ❌"
+        RAM_LINE="🧠 Memory: ${RAM_USAGE}% (${RAM_INFO}) ⚠️"
     fi
 
-    # header
+    # CPU
+    if (( $(echo "$CPU_LOAD < $CPU_CORES" | bc -l) )); then
+        CPU_LINE="⚙️ CPU: $CPU_LOAD ✅"
+    else
+        CPU_LINE="⚙️ CPU: $CPU_LOAD ❌"
+    fi
+
+    # QUEUE
+    if [[ "$QUEUE" -eq 0 ]]; then
+        QUEUE_LINE="📬 Queue: Mail queue is empty"
+    else
+        QUEUE_LINE="📬 Queue: $QUEUE messages"
+    fi
+
+    # SSL
+    if [[ "$SSL_DAYS" =~ ^[0-9]+$ ]]; then
+        SSL_LINE="🔒 SSL: $SSL_DAYS days remaining"
+    else
+        SSL_LINE="🔒 SSL: N/A"
+    fi
+
+    # BACKUP
+    if [[ "$BACKUP_STATUS" == "$TODAY" ]]; then
+        BACKUP_LINE="💿 Last backup: $BACKUP_STATUS (today)"
+    else
+        BACKUP_LINE="💿 Last backup: $BACKUP_STATUS"
+    fi
+
+    # HEADER
     if [[ "$TYPE" == "PROBLEM" ]]; then
         HEADER="${EMOJI_ALERT} Zimbra Problem Detected"
     elif [[ "$TYPE" == "RECOVERY" ]]; then
         HEADER="${EMOJI_OK} Zimbra Recovered"
     else
-        HEADER="${EMOJI_REPORT} Zimbra Daily Status"
+        HEADER="${EMOJI_REPORT} ZIMBRA DAILY SUMMARY"
     fi
 
-    MESSAGE="$HEADER\n\n[$HOSTNAME]\nTime   : $NOW\n\nServices   : $SERVICE_STATUS"
-
-    if [[ -n "$STOPPED_LIST" ]]; then
-        MESSAGE="$MESSAGE\nDown       : $STOPPED_LIST"
-    fi
-
-    MESSAGE="$MESSAGE\n\nDisk       : $DISK_STATUS\nRAM        : $RAM_USAGE%\nCPU Load   : $CPU_LOAD\n\nQueue      : $QUEUE\nSSL Exp    : $SSL_STATUS\nBackup     : $BACKUP_STATUS"
+    MESSAGE="$HEADER\n\n📍 Server: $HOSTNAME\n⏰ Time: $NOW\n\nService Status:\n$SERVICE_LINE\n\nResources:\n$DISK_LINE\n$RAM_LINE\n$CPU_LINE\n\nMail:\n$QUEUE_LINE\n\nSecurity:\n$SSL_LINE\n\nBackup:\n$BACKUP_LINE"
 
 fi
 
 # ================= SEND =================
 
+[[ -z "$MESSAGE" ]] && exit 0
+
 FORMATTED_MESSAGE=$(printf "%b" "$MESSAGE")
 
-if [[ -n "$MESSAGE" ]]; then
-    FORMATTED_MESSAGE=$(printf "%b" "$MESSAGE")
-
-    curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-    -d chat_id="$TELEGRAM_CHAT_ID" \
-    -d text="$FORMATTED_MESSAGE"
-fi
+curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+-d chat_id="$TELEGRAM_CHAT_ID" \
+-d text="$FORMATTED_MESSAGE"
 
 echo "$CURRENT_STATE" > "$STATE_FILE"
