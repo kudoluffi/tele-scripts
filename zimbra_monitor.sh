@@ -2,7 +2,7 @@
 
 # =========================================================
 # Zimbra Monitoring Script
-# Version : v1.5.0
+# Version : v1.6.1
 # Author  : ChatG-Kudo
 # =========================================================
 
@@ -13,6 +13,7 @@ TELEGRAM_CHAT_ID="ISI_CHAT_ID"
 HOSTNAME=$(hostname)
 
 STATE_FILE="/tmp/zimbra_state"
+DETAIL_FILE="/tmp/zimbra_detail"
 DAILY_FILE="/tmp/zimbra_daily"
 
 FORCE_SEND=0
@@ -83,6 +84,14 @@ BACKUP_PROBLEM=0
 [[ "$SSL_DAYS" =~ ^[0-9]+$ && "$SSL_DAYS" -lt 30 ]] && SSL_PROBLEM=1
 [[ "$BACKUP_DAYS" -gt 7 ]] && BACKUP_PROBLEM=1
 
+CURRENT_DETAIL="$SERVICE_PROBLEM|$DISK_PROBLEM|$SSL_PROBLEM|$BACKUP_PROBLEM"
+
+# ================= LOAD LAST =================
+LAST_DETAIL="0|0|0|0"
+[[ -f "$DETAIL_FILE" ]] && LAST_DETAIL=$(cat "$DETAIL_FILE")
+
+IFS="|" read LAST_SERVICE LAST_DISK LAST_SSL LAST_BACKUP <<< "$LAST_DETAIL"
+
 # ================= STATE =================
 CURRENT_STATE="OK"
 [[ $SERVICE_PROBLEM -eq 1 || $DISK_PROBLEM -eq 1 || $SSL_PROBLEM -eq 1 || $BACKUP_PROBLEM -eq 1 ]] && CURRENT_STATE="PROBLEM"
@@ -93,13 +102,14 @@ LAST_STATE=""
 SEND=0
 TYPE=""
 
+# ================= STATE CHANGE =================
 if [[ "$CURRENT_STATE" != "$LAST_STATE" ]]; then
     SEND=1
     [[ "$CURRENT_STATE" == "OK" ]] && TYPE="RECOVERY"
     [[ "$CURRENT_STATE" == "PROBLEM" ]] && TYPE="PROBLEM"
 fi
 
-# DAILY
+# ================= DAILY =================
 if [[ "$CURRENT_STATE" == "OK" && "$CURRENT_HOUR_MIN" == "05:30" ]]; then
     LAST_DAILY=""
     [[ -f "$DAILY_FILE" ]] && LAST_DAILY=$(cat "$DAILY_FILE")
@@ -119,33 +129,15 @@ if [[ "$SEND" -eq 1 || "$FORCE_SEND" -eq 1 ]]; then
 
         MESSAGE="🚨 Zimbra Problem Detected\n\n[$HOSTNAME]\nTime   : $NOW\n"
 
-        if [[ $SERVICE_PROBLEM -eq 1 ]]; then
-            if [[ "$TOTAL_SERVICE" -eq 0 ]]; then
-                MESSAGE="$MESSAGE\n\nServices   : DOWN ❌"
-            else
-                MESSAGE="$MESSAGE\n\nServices   : $RUNNING_SERVICE/$TOTAL_SERVICE Running ❌"
-                [[ -n "$STOPPED_LIST" ]] && MESSAGE="$MESSAGE\nDOWN ❌ : $STOPPED_LIST"
-            fi
-        fi
-
-        if [[ $DISK_PROBLEM -eq 1 ]]; then
-            MESSAGE="$MESSAGE\n\nDisk       : ${DISK_USAGE}% (CRITICAL)"
-        fi
+        [[ $SERVICE_PROBLEM -eq 1 ]] && MESSAGE="$MESSAGE\n\nServices   : $RUNNING_SERVICE/$TOTAL_SERVICE Running ❌\nDOWN ❌ : $STOPPED_LIST"
+        [[ $DISK_PROBLEM -eq 1 ]] && MESSAGE="$MESSAGE\n\nDisk       : ${DISK_USAGE}% (CRITICAL)"
 
         if [[ $SSL_PROBLEM -eq 1 ]]; then
-            if [[ "$SSL_DAYS" -lt 15 ]]; then
-                MESSAGE="$MESSAGE\n\nSSL Exp    : $SSL_DAYS days ❌"
-            else
-                MESSAGE="$MESSAGE\n\nSSL Exp    : $SSL_DAYS days ⚠️"
-            fi
+            [[ "$SSL_DAYS" -lt 15 ]] && MESSAGE="$MESSAGE\n\nSSL Exp    : $SSL_DAYS days ❌" || MESSAGE="$MESSAGE\n\nSSL Exp    : $SSL_DAYS days ⚠️"
         fi
 
         if [[ $BACKUP_PROBLEM -eq 1 ]]; then
-            if [[ "$BACKUP_DAYS" -gt 10 ]]; then
-                MESSAGE="$MESSAGE\n\nBackup     : $BACKUP_DAYS days ago ❌"
-            else
-                MESSAGE="$MESSAGE\n\nBackup     : $BACKUP_DAYS days ago ⚠️"
-            fi
+            [[ "$BACKUP_DAYS" -gt 10 ]] && MESSAGE="$MESSAGE\n\nBackup     : $BACKUP_DAYS days ago ❌" || MESSAGE="$MESSAGE\n\nBackup     : $BACKUP_DAYS days ago ⚠️"
         fi
 
     # ================= RECOVERY =================
@@ -153,10 +145,10 @@ if [[ "$SEND" -eq 1 || "$FORCE_SEND" -eq 1 ]]; then
 
         MESSAGE="✅ Zimbra Recovered\n\n[$HOSTNAME]\nTime   : $NOW\n\n"
 
-        [[ $SERVICE_PROBLEM -eq 0 ]] && MESSAGE="$MESSAGE Services   : OK ✅\n"
-        [[ $DISK_PROBLEM -eq 0 ]] && MESSAGE="$MESSAGE Disk       : ${DISK_USAGE}% OK\n"
-        [[ $SSL_PROBLEM -eq 0 ]] && MESSAGE="$MESSAGE SSL        : OK\n"
-        [[ $BACKUP_PROBLEM -eq 0 ]] && MESSAGE="$MESSAGE Backup     : OK\n"
+        [[ $LAST_SERVICE -eq 1 && $SERVICE_PROBLEM -eq 0 ]] && MESSAGE="$MESSAGE Services   : OK ✅\n"
+        [[ $LAST_DISK -eq 1 && $DISK_PROBLEM -eq 0 ]] && MESSAGE="$MESSAGE Disk       : ${DISK_USAGE}% OK\n"
+        [[ $LAST_SSL -eq 1 && $SSL_PROBLEM -eq 0 ]] && MESSAGE="$MESSAGE SSL        : OK\n"
+        [[ $LAST_BACKUP -eq 1 && $BACKUP_PROBLEM -eq 0 ]] && MESSAGE="$MESSAGE Backup     : OK\n"
 
         MESSAGE="$MESSAGE\nStatus     : BACK TO NORMAL"
 
@@ -164,13 +156,23 @@ if [[ "$SEND" -eq 1 || "$FORCE_SEND" -eq 1 ]]; then
     else
 
         MESSAGE="📊 ZIMBRA DAILY SUMMARY\n\n📍 Server: $HOSTNAME\n⏰ Time: $NOW\n\n"
-        MESSAGE="$MESSAGE Services : $RUNNING_SERVICE running\n"
-        MESSAGE="$MESSAGE Disk     : ${DISK_USAGE}%\n"
-        MESSAGE="$MESSAGE Memory   : ${RAM_USAGE}%\n"
-        MESSAGE="$MESSAGE CPU      : $CPU_LOAD\n"
-        MESSAGE="$MESSAGE Queue    : $QUEUE\n"
-        MESSAGE="$MESSAGE SSL      : $SSL_DAYS days\n"
-        MESSAGE="$MESSAGE Backup   : $BACKUP_DAYS days ago"
+
+        MESSAGE="$MESSAGE Service Status:\n"
+        MESSAGE="$MESSAGE ✅ Services: $RUNNING_SERVICE running\n\n"
+
+        MESSAGE="$MESSAGE Resources:\n"
+        MESSAGE="$MESSAGE 💾 Disk: ${DISK_USAGE}% (${DISK_AVAIL} available)\n"
+        MESSAGE="$MESSAGE 🧠 Memory: ${RAM_USAGE}% (${RAM_INFO})\n"
+        MESSAGE="$MESSAGE ⚙️ CPU: $CPU_LOAD\n\n"
+
+        MESSAGE="$MESSAGE Mail:\n"
+        MESSAGE="$MESSAGE 📬 Queue: $QUEUE messages\n\n"
+
+        MESSAGE="$MESSAGE Security:\n"
+        MESSAGE="$MESSAGE 🔒 SSL: $SSL_DAYS days\n\n"
+
+        MESSAGE="$MESSAGE Backup:\n"
+        MESSAGE="$MESSAGE 💿 Last backup: $BACKUP_DAYS days ago"
     fi
 fi
 
@@ -184,4 +186,5 @@ curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
 -d text="$FORMATTED_MESSAGE"
 
 echo "$CURRENT_STATE" > "$STATE_FILE"
+echo "$CURRENT_DETAIL" > "$DETAIL_FILE"
 
