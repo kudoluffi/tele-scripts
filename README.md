@@ -42,5 +42,4 @@ Monitor status MySQL Replica (Slave).
 ---
 
 ## 👨‍💻 Author
-
-Maintained by you 🚀
+ChatG-Kudo 🚀
