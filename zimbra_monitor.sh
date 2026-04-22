@@ -15,13 +15,11 @@ NOW=$(date '+%Y-%m-%d %H:%M:%S')
 CURRENT_HOUR_MIN=$(date '+%H:%M')
 TODAY=$(date '+%Y-%m-%d')
 
-# Threshold
 DISK_CRITICAL=90
 
-# Emoji (unicode safe)
-EMOJI_OK="\U00002705"
-EMOJI_ALERT="\U0001F6A8"
-EMOJI_REPORT="\U0001F4CA"
+EMOJI_OK="✅"
+EMOJI_ALERT="🚨"
+EMOJI_REPORT="📊"
 
 ZIMBRA_CMD="sudo -u zimbra"
 
@@ -30,9 +28,16 @@ ZIMBRA_CMD="sudo -u zimbra"
 # ================= SERVICE =================
 STATUS=$($ZIMBRA_CMD zmcontrol status 2>/dev/null)
 
-TOTAL_SERVICE=$(echo "$STATUS" | grep -E "Running|Stopped" | wc -l)
-RUNNING_SERVICE=$(echo "$STATUS" | grep -c "Running")
-STOPPED_LIST=$(echo "$STATUS" | grep "Stopped" | awk '{print $1}' | paste -sd "," -)
+# Detect Zimbra totally down
+if echo "$STATUS" | grep -qi "not running"; then
+    TOTAL_SERVICE=0
+    RUNNING_SERVICE=0
+    STOPPED_LIST="all"
+else
+    TOTAL_SERVICE=$(echo "$STATUS" | grep -E "Running|Stopped" | wc -l)
+    RUNNING_SERVICE=$(echo "$STATUS" | grep -c "Running")
+    STOPPED_LIST=$(echo "$STATUS" | grep "Stopped" | awk '{print $1}' | paste -sd "," -)
+fi
 
 # ================= DISK =================
 DISK_USAGE=$(df -h /opt/zimbra | awk 'NR==2 {print $5}' | sed 's/%//')
@@ -50,34 +55,32 @@ CPU_CORES=$(nproc)
 QUEUE=$($ZIMBRA_CMD postqueue -p 2>/dev/null | grep -c "^[A-F0-9]")
 
 # ================= SSL =================
-
-SSL_DATE=$(su - zimbra -c "zmcertmgr viewdeployedcrt" 2>/dev/null \
+SSL_DATE=$($ZIMBRA_CMD zmcertmgr viewdeployedcrt 2>/dev/null \
     | grep -m1 "notAfter=" \
     | cut -d'=' -f2)
 
 SSL_DAYS="N/A"
-
 if [[ -n "$SSL_DATE" ]]; then
     SSL_EXP=$(date -d "$SSL_DATE" +%s 2>/dev/null)
     NOW_SEC=$(date +%s)
-
-    if [[ -n "$SSL_EXP" ]]; then
-        SSL_DAYS=$(( (SSL_EXP - NOW_SEC) / 86400 ))
-    fi
+    [[ -n "$SSL_EXP" ]] && SSL_DAYS=$(( (SSL_EXP - NOW_SEC) / 86400 ))
 fi
+
 # ================= BACKUP =================
 LAST_BACKUP_FILE=$(ls -t /backup/zimbra/logs/ 2>/dev/null | head -1)
 LAST_BACKUP_DATE=$(echo "$LAST_BACKUP_FILE" | grep -oE '[0-9]{8}')
 
 BACKUP_STATUS="UNKNOWN"
-if [[ -n "$LAST_BACKUP_DATE" ]]; then
-    BACKUP_STATUS=$(date -d "$LAST_BACKUP_DATE" '+%Y-%m-%d')
-fi
+[[ -n "$LAST_BACKUP_DATE" ]] && BACKUP_STATUS=$(date -d "$LAST_BACKUP_DATE" '+%Y-%m-%d')
 
 # ================= STATE =================
 CURRENT_STATE="OK"
 
-if [[ "$RUNNING_SERVICE" -lt "$TOTAL_SERVICE" ]] || [[ "$DISK_USAGE" -ge "$DISK_CRITICAL" ]]; then
+if [[ "$TOTAL_SERVICE" -eq 0 ]]; then
+    CURRENT_STATE="PROBLEM"
+elif [[ "$RUNNING_SERVICE" -lt "$TOTAL_SERVICE" ]]; then
+    CURRENT_STATE="PROBLEM"
+elif [[ "$DISK_USAGE" -ge "$DISK_CRITICAL" ]]; then
     CURRENT_STATE="PROBLEM"
 fi
 
@@ -88,14 +91,13 @@ SEND=0
 TYPE=""
 
 # ================= LOGIC =================
-
 if [[ "$CURRENT_STATE" != "$LAST_STATE" ]]; then
     SEND=1
     [[ "$CURRENT_STATE" == "OK" ]] && TYPE="RECOVERY"
     [[ "$CURRENT_STATE" == "PROBLEM" ]] && TYPE="PROBLEM"
 fi
 
-# DAILY jam 05:30
+# DAILY 05:30
 if [[ "$CURRENT_STATE" == "OK" && "$CURRENT_HOUR_MIN" == "05:30" ]]; then
     LAST_DAILY=""
     [[ -f "$DAILY_FILE" ]] && LAST_DAILY=$(cat "$DAILY_FILE")
@@ -108,15 +110,15 @@ if [[ "$CURRENT_STATE" == "OK" && "$CURRENT_HOUR_MIN" == "05:30" ]]; then
 fi
 
 # ================= MESSAGE =================
-
 if [[ "$SEND" -eq 1 || "$FORCE_SEND" -eq 1 ]]; then
 
-    # SERVICE
-    if [[ "$RUNNING_SERVICE" -eq "$TOTAL_SERVICE" ]]; then
+    # SERVICE DISPLAY
+    if [[ "$TOTAL_SERVICE" -eq 0 ]]; then
+        SERVICE_LINE="❌ Services: Zimbra is DOWN"
+    elif [[ "$RUNNING_SERVICE" -eq "$TOTAL_SERVICE" ]]; then
         SERVICE_LINE="✅ Services: $RUNNING_SERVICE running"
     else
-        SERVICE_LINE="❌ Services: $RUNNING_SERVICE/$TOTAL_SERVICE running"
-        [[ -n "$STOPPED_LIST" ]] && SERVICE_LINE="$SERVICE_LINE ($STOPPED_LIST)"
+        SERVICE_LINE="❌ Services: $RUNNING_SERVICE/$TOTAL_SERVICE running ($STOPPED_LIST)"
     fi
 
     # DISK
@@ -129,11 +131,7 @@ if [[ "$SEND" -eq 1 || "$FORCE_SEND" -eq 1 ]]; then
     fi
 
     # RAM
-    if [[ "$RAM_USAGE" -lt 80 ]]; then
-        RAM_LINE="🧠 Memory: ${RAM_USAGE}% (${RAM_INFO}) ✅"
-    else
-        RAM_LINE="🧠 Memory: ${RAM_USAGE}% (${RAM_INFO}) ⚠️"
-    fi
+    RAM_LINE="🧠 Memory: ${RAM_USAGE}% (${RAM_INFO})"
 
     # CPU
     if (( $(echo "$CPU_LOAD < $CPU_CORES" | bc -l) )); then
@@ -143,25 +141,13 @@ if [[ "$SEND" -eq 1 || "$FORCE_SEND" -eq 1 ]]; then
     fi
 
     # QUEUE
-    if [[ "$QUEUE" -eq 0 ]]; then
-        QUEUE_LINE="📬 Queue: Mail queue is empty"
-    else
-        QUEUE_LINE="📬 Queue: $QUEUE messages"
-    fi
+    [[ "$QUEUE" -eq 0 ]] && QUEUE_LINE="📬 Queue: Mail queue is empty" || QUEUE_LINE="📬 Queue: $QUEUE messages"
 
     # SSL
-    if [[ "$SSL_DAYS" =~ ^[0-9]+$ ]]; then
-        SSL_LINE="🔒 SSL: $SSL_DAYS days remaining"
-    else
-        SSL_LINE="🔒 SSL: N/A"
-    fi
+    [[ "$SSL_DAYS" =~ ^[0-9]+$ ]] && SSL_LINE="🔒 SSL: $SSL_DAYS days remaining" || SSL_LINE="🔒 SSL: N/A"
 
     # BACKUP
-    if [[ "$BACKUP_STATUS" == "$TODAY" ]]; then
-        BACKUP_LINE="💿 Last backup: $BACKUP_STATUS (today)"
-    else
-        BACKUP_LINE="💿 Last backup: $BACKUP_STATUS"
-    fi
+    [[ "$BACKUP_STATUS" == "$TODAY" ]] && BACKUP_LINE="💿 Last backup: $BACKUP_STATUS (today)" || BACKUP_LINE="💿 Last backup: $BACKUP_STATUS"
 
     # HEADER
     if [[ "$TYPE" == "PROBLEM" ]]; then
@@ -173,11 +159,9 @@ if [[ "$SEND" -eq 1 || "$FORCE_SEND" -eq 1 ]]; then
     fi
 
     MESSAGE="$HEADER\n\n📍 Server: $HOSTNAME\n⏰ Time: $NOW\n\nService Status:\n$SERVICE_LINE\n\nResources:\n$DISK_LINE\n$RAM_LINE\n$CPU_LINE\n\nMail:\n$QUEUE_LINE\n\nSecurity:\n$SSL_LINE\n\nBackup:\n$BACKUP_LINE"
-
 fi
 
 # ================= SEND =================
-
 [[ -z "$MESSAGE" ]] && exit 0
 
 FORMATTED_MESSAGE=$(printf "%b" "$MESSAGE")
