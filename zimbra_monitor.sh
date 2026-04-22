@@ -2,7 +2,7 @@
 
 # =========================================================
 # Zimbra Monitoring Script
-# Version : v1.6.1
+# Version : v1.6.2
 # Author  : ChatG-Kudo
 # =========================================================
 
@@ -49,7 +49,7 @@ RAM_INFO=$(free -h | awk '/Mem:/ {print $3 "/" $2}')
 
 CPU_LOAD=$(uptime | awk -F'load average:' '{ print $2 }' | cut -d',' -f1 | xargs)
 
-QUEUE=$(su - $ZIMBRA_USER postqueue -p 2>/dev/null | grep -c "^[A-F0-9]")
+QUEUE=$(su - $ZIMBRA_USER -c "postqueue -p" 2>/dev/null | grep -c "^[A-F0-9]")
 
 # ================= SSL =================
 SSL_DATE=$(sudo -u $ZIMBRA_USER $ZIMBRA_BIN/zmcertmgr viewdeployedcrt 2>/dev/null \
