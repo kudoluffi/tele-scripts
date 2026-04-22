@@ -5,16 +5,10 @@ Kumpulan script ringan untuk monitoring server dan mengirim notifikasi ke Telegr
 ---
 
 ## 📜 Available Scripts
-
-### 📊 mysql_replica_monitor.sh
-
-Monitor status MySQL Replica (Slave).
-
-* 🚨 Alert saat terjadi masalah
-* ✅ Notif saat kembali normal
-* 📊 Report harian (tanpa spam)
-
-📖 Detail: [mysql_replica_monitor.md](./mysql_replica_monitor.md)
+| Script | Dokumentasi | Deskripsi | 
+|--------|-------------|-----------|
+| [`mysql_replica_monitor.sh`](mysql_replica_monitor.sh) | [`mysql_replica_monitor.md`](mysql_replica_monitor.md) | Monitor status MySQL Replica (Slave) dan mengirimkan notifikasi ke Telegram |
+| [`zimbra_monitor.sh`](zimbra_monitor.sh) | [`zimbra_monitor.md`](zimbra_monitor.md) | Monitoring Mail Server Zimbra (Services Status, Resource Usage, Mail Queue, Sertifikat SSL dan Backup | 
 
 ---
 
