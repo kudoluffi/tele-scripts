@@ -45,13 +45,20 @@ CPU_LOAD=$(uptime | awk -F'load average:' '{ print $2 }' | cut -d',' -f1 | xargs
 QUEUE=$(su - zimbra -c "postqueue -p" 2>/dev/null | grep -c "^[A-F0-9]")
 
 # ================= SSL =================
-SSL_DATE=$(su - zimbra -c "zmcertmgr viewdeployedcrt" 2>/dev/null | grep "Not After" | head -1 | cut -d':' -f2- | xargs)
+SSL_DATE=$(su - zimbra -c "zmcertmgr viewdeployedcrt" 2>/dev/null \
+    | grep -i "NotAfter" \
+    | sed 's/.*NotAfter[[:space:]]*:[[:space:]]*//' \
+    | head -1)
 
-SSL_DAYS=999
+SSL_DAYS="N/A"
+
 if [[ -n "$SSL_DATE" ]]; then
     SSL_EXP=$(date -d "$SSL_DATE" +%s 2>/dev/null)
     NOW_SEC=$(date +%s)
-    SSL_DAYS=$(( (SSL_EXP - NOW_SEC) / 86400 ))
+
+    if [[ -n "$SSL_EXP" ]]; then
+        SSL_DAYS=$(( (SSL_EXP - NOW_SEC) / 86400 ))
+    fi
 fi
 
 # ================= BACKUP =================
